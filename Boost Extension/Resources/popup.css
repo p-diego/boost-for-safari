@@ -1,0 +1,538 @@
+:root {
+    color-scheme: light dark;
+    --boost-fg: CanvasText;
+    --boost-fg-2: color-mix(in srgb, CanvasText 72%, transparent);
+    --boost-fg-3: color-mix(in srgb, CanvasText 50%, transparent);
+    --boost-fg-4: color-mix(in srgb, CanvasText 30%, transparent);
+    --boost-accent: AccentColor;
+    --boost-card: color-mix(in srgb, CanvasText 5%, CanvasText 5%);
+    --boost-card-2: color-mix(in srgb, Canvas 75%, CanvasText 10%);
+    --boost-border: color-mix(in srgb, CanvasText 10%, transparent);
+    --boost-row-divider: color-mix(in srgb, CanvasText 8%, transparent);
+    --boost-shadow:
+        0 1px 2px color-mix(in srgb, CanvasText 12%, transparent),
+        0 8px 28px color-mix(in srgb, CanvasText 12%, transparent);
+    --boost-danger: #ff3b30;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+    color: var(--boost-fg);
+    background: transparent;
+}
+
+.boost-root {
+    width: 320px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+}
+
+/* No active host (about:blank, new tab, file://): show the popup chrome but
+   block every interaction since there's nowhere to persist a boost. */
+.boost-root.is-disabled .boost-views,
+.boost-root.is-disabled #reset-btn,
+.boost-root.is-disabled #enabled-toggle,
+.boost-root.is-disabled #host-select {
+    pointer-events: none;
+    opacity: 0.4;
+}
+
+/* ── Slide nav container ──────────────────────────────────────── */
+.boost-views {
+    overflow: hidden;
+    border-radius: 4px;
+    position: relative;
+}
+
+.boost-views-track {
+    display: flex;
+    align-items: stretch;
+    width: 300%;
+    transform: translateX(0);
+    transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.boost-views-track.no-anim {
+    transition: none !important;
+}
+
+.view {
+    width: calc(100% / 3);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 2px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.view-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 2px;
+}
+
+.view-header.subheader {
+    justify-content: space-between;
+}
+
+.view-title {
+    flex: 1;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    padding-left: 4px;
+}
+
+/* Host select — opens native macOS popup menu, closed state styled as pill */
+.host-select {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 1;
+    height: 32px;
+    border: 0;
+    border-radius: 10px;
+    background-color: var(--boost-card);
+    color: var(--boost-fg);
+    font: inherit;
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 26px 0 12px;
+    text-align: left;
+    text-align-last: left;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 9px;
+    transition: background-color 120ms ease;
+    box-shadow: 0 0.5px 0 var(--boost-border) inset, 0 1px 2px color-mix(in srgb, CanvasText 6%, transparent);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.host-select:hover { background-color: color-mix(in srgb, CanvasText 18%, transparent); }
+.host-select:focus { outline: none; }
+.host-select option:disabled { color: var(--boost-fg-3); }
+
+.icon-btn-circle {
+    width: 40px;
+    height: 32px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--boost-card);
+    color: var(--boost-fg);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 120ms ease, transform 80ms ease;
+    box-shadow: 0 0.5px 0 var(--boost-border) inset;
+    flex-shrink: 0;
+}
+
+.icon-btn-circle:hover { background: color-mix(in srgb, CanvasText 18%, transparent); }
+.icon-btn-circle:active { transform: scale(0.94); }
+
+/* ── Native macOS switch (Safari 17.4+) ───────────────────────── */
+.boost-toggle {
+    appearance: auto;
+    accent-color: AccentColor;
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.boost-toggle-sm {
+    /* WebKit sizes the switch from font-size when set explicitly. */
+    font-size: 12px;
+}
+
+/* ── Card + row ───────────────────────────────────────────────── */
+.card {
+    background: var(--boost-card);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 0.5px 0 var(--boost-border) inset, 0 1px 2px color-mix(in srgb, CanvasText 4%, transparent);
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 0 14px;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+    cursor: default;
+}
+
+.row + .row {
+    border-top: 0.5px solid var(--boost-row-divider);
+}
+
+.row.nav-row {
+    cursor: pointer;
+    transition: background-color 120ms ease;
+}
+.row.nav-row:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
+.row.nav-row:active { background: color-mix(in srgb, CanvasText 9%, transparent); }
+
+.row-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--boost-fg-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.row-label {
+    flex: 1;
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row-chevron {
+    color: var(--boost-fg-4);
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.row-badge {
+    min-width: 22px;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, CanvasText 12%, transparent);
+    color: var(--boost-fg-2);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* ── Color boost sliders ──────────────────────────────────────── */
+.slider-group {
+    padding: 6px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-top: 0.5px solid var(--boost-row-divider);
+    transition: opacity 150ms ease;
+}
+
+.slider-group.is-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.slider-row {
+    display: grid;
+    grid-template-columns: 72px 1fr 44px;
+    align-items: center;
+    gap: 10px;
+    min-height: 26px;
+}
+
+.slider-label {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--boost-fg-2);
+}
+
+.slider-value {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--boost-fg-3);
+    text-align: right;
+}
+
+.slider {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, CanvasText 14%, transparent);
+    outline: none;
+    cursor: pointer;
+    margin: 0;
+}
+
+.slider::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: AccentColor;
+    border: 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    cursor: grab;
+    transition: transform 100ms ease;
+}
+
+.slider::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+}
+
+/* ── Native select styling ────────────────────────────────────── */
+.row-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--boost-fg-2);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 400;
+    text-align: right;
+    padding: 4px 18px 4px 8px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    background-size: 9px;
+    field-sizing: content;
+    min-width: 40px;
+    max-width: 160px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align-last: right;
+}
+
+.row-select:focus { outline: none; }
+.row-select:hover { background-color: color-mix(in srgb, CanvasText 6%, transparent); }
+
+/* ── Section title (between cards) ───────────────────────────── */
+.section-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--boost-fg);
+    margin: 8px 14px -4px;
+}
+
+/* ── Code editor ──────────────────────────────────────────────── */
+.code-editor-card {
+    background: #1c1c1e;
+    border-radius: 14px;
+    padding: 10px;
+    box-shadow: 0 0.5px 0 var(--boost-border) inset;
+    height: 220px;
+}
+
+@media (prefers-color-scheme: light) {
+    .code-editor-card { background: #0f0f10; }
+}
+
+.code-editor {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    border: 0;
+    resize: none;
+    color: #f0f0f0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    -webkit-user-select: text;
+    user-select: text;
+    outline: none;
+}
+
+.code-editor::placeholder { color: rgba(255,255,255,0.3); }
+
+/* ── Hide content rules list ──────────────────────────────────── */
+.zap-rule-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 8px 0 14px;
+}
+
+.zap-rule-row + .zap-rule-row {
+    border-top: 0.5px solid var(--boost-row-divider);
+}
+
+.zap-rule-sel {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--boost-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zap-rule-delete {
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 0;
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+    color: var(--boost-fg-3);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+.zap-rule-delete:hover {
+    background: color-mix(in srgb, var(--boost-danger) 18%, transparent);
+    color: var(--boost-danger);
+}
+
+/* ── Modal (rename) ───────────────────────────────────────────── */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 100;
+}
+
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 101;
+    width: 260px;
+    background: Canvas;
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    border: 0.5px solid var(--boost-border);
+}
+
+.modal[hidden], .modal-backdrop[hidden] { display: none; }
+
+.modal-title {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 10px;
+}
+
+.modal-input {
+    width: 100%;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--boost-border);
+    border-radius: 6px;
+    background: Canvas;
+    color: var(--boost-fg);
+    font: inherit;
+    font-size: 13px;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.modal-textarea {
+    width: 100%;
+    height: 120px;
+    padding: 8px;
+    border: 1px solid var(--boost-border);
+    border-radius: 6px;
+    background: Canvas;
+    color: var(--boost-fg);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    -webkit-user-select: text;
+    user-select: text;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.modal-textarea:focus {
+    border-color: AccentColor;
+}
+
+.modal-input:focus {
+    outline: 2px solid AccentColor;
+    outline-offset: -1px;
+    border-color: transparent;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+.modal-btn {
+    height: 28px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 0.5px solid var(--boost-border);
+    background: var(--boost-card);
+    color: var(--boost-fg);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.modal-btn-primary {
+    background: AccentColor;
+    color: #fff;
+    border-color: transparent;
+    font-weight: 500;
+}
+
+/* ── Toast ────────────────────────────────────────────────────── */
+.toast {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 400;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    max-width: 280px;
+    text-align: center;
+}
+
+.toast[hidden] { display: none; }
