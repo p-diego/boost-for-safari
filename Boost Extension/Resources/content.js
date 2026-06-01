@@ -112,6 +112,12 @@ const BOOST_TEXT_CASE_MAP = {
 const BOOST_MEDIA_COUNTER_INVERT_SELECTOR =
     'img, video, iframe, embed, object, svg image';
 
+// Elements whose original colours should be preserved through dark mode AND
+// color boost — same treatment as media counter-invert. Triggered by
+// "thumbnail" appearing anywhere in the class attribute, so it matches
+// patterns like `video-thumbnail`, `thumbnail-wrapper`, `card-thumbnail-img`.
+const BOOST_PRESERVE_SELECTOR = '[class*="thumbnail"]';
+
 // Semantic UI regions whose images should NOT be counter-inverted: logos and
 // nav icons sitting inside `<header>`/`<nav>`/`<footer>`/`<aside>` are usually
 // designed for the surrounding chrome's tone. After the html filter flips that
@@ -230,6 +236,26 @@ function buildCSS(boost) {
         const inverseChain = buildInverseFilterChain(boost);
         if (inverseChain) {
             rules.push(`${BOOST_MEDIA_COUNTER_INVERT_SELECTOR} { filter: ${inverseChain} !important; }`);
+            // Preserve thumbnail wrappers entirely: counter-invert the
+            // wrapper, then suppress the per-media counter-invert on its
+            // descendants. Without that suppression, an `<img>` inside a
+            // `.thumbnail` would get TWO counter-inverts stacked (one from
+            // the wrapper's filter context, one from its own rule), ending
+            // up visibly inverted — the opposite of what we want.
+            rules.push(`${BOOST_PRESERVE_SELECTOR} { filter: ${inverseChain} !important; }`);
+            rules.push(`${BOOST_PRESERVE_SELECTOR} :is(${BOOST_MEDIA_COUNTER_INVERT_SELECTOR}) { filter: none !important; }`);
+            // Video wrapper counter-invert: when a parent exists exclusively
+            // to host a <video> (no other children), counter-invert it so the
+            // hardware-decoded video frames display in original colors. Inside
+            // a tagged wrapper, suppress the video element's own counter-
+            // invert to avoid double-application. Runs for ANY html-level
+            // filter (not just dark mode): Safari's hw-decode path silently
+            // drops brightness/saturate/contrast from the <video>'s own filter
+            // while still honoring them on the html filter — so without the
+            // wrapper-level invert, color boost leaks onto playing videos
+            // (e.g., animesaturn.cx/watch).
+            rules.push(`[${BOOST_VIDEO_CONTAINER_TAG}="true"] { filter: ${inverseChain} !important; }`);
+            rules.push(`[${BOOST_VIDEO_CONTAINER_TAG}="true"] > video { filter: none !important; }`);
         }
 
         if (boost.darkMode) {
@@ -248,13 +274,6 @@ function buildCSS(boost) {
             // so they retain their intended dark look instead of being flipped
             // to light by the page-level filter.
             rules.push(`[${BOOST_DARK_UI_TAG}="true"] { filter: ${inverseChain} !important; }`);
-            // Video wrapper counter-invert: when a parent exists exclusively
-            // to host a <video> (no other children), counter-invert it so the
-            // hardware-decoded video frames display in original colors. Inside
-            // a tagged wrapper, suppress the video element's own counter-
-            // invert to avoid double-application.
-            rules.push(`[${BOOST_VIDEO_CONTAINER_TAG}="true"] { filter: ${inverseChain} !important; }`);
-            rules.push(`[${BOOST_VIDEO_CONTAINER_TAG}="true"] > video { filter: none !important; }`);
         }
     }
 
@@ -481,37 +500,51 @@ function untagVideoContainers() {
 let boostDarkUiObserver = null;
 let boostDarkUiRetagTimer = null;
 let boostDarkUiDomReadyHandler = null;
+// True while dark-mode-specific tagging (dark UI regions, large UI imgs) is
+// active. Video container tagging always runs whenever the tracker is on:
+// the Safari hw-decode workaround is needed for any html filter, not only
+// dark mode.
+let boostTrackingDark = false;
+
+function boostRetagNow() {
+    if (boostTrackingDark) {
+        tagDarkUiElements();
+        tagLargeUiImages();
+    }
+    tagVideoContainers();
+}
 
 function boostScheduleDarkUiRetag() {
     if (boostDarkUiRetagTimer) return;
     boostDarkUiRetagTimer = setTimeout(() => {
         boostDarkUiRetagTimer = null;
-        tagDarkUiElements();
-        tagLargeUiImages();
-        tagVideoContainers();
+        boostRetagNow();
     }, 250);
 }
 
-function startDarkUiTracking() {
+function startDarkUiTracking(darkMode) {
+    // Transitioning out of dark mode while the tracker stays alive (color
+    // boost still on): clear stale dark-only tags so their counter-invert
+    // rule stops applying.
+    if (boostTrackingDark && !darkMode) {
+        untagDarkUiElements();
+        untagLargeUiImages();
+    }
+    boostTrackingDark = !!darkMode;
+
     // Already running: just retag in case the DOM changed without an event
     // we observe (e.g., color-scheme media-query flip in the page CSS).
     if (boostDarkUiObserver) {
-        tagDarkUiElements();
-        tagLargeUiImages();
-        tagVideoContainers();
+        boostRetagNow();
         return;
     }
 
     if (document.body) {
-        tagDarkUiElements();
-        tagLargeUiImages();
-        tagVideoContainers();
+        boostRetagNow();
     } else {
         boostDarkUiDomReadyHandler = () => {
             boostDarkUiDomReadyHandler = null;
-            tagDarkUiElements();
-            tagLargeUiImages();
-            tagVideoContainers();
+            boostRetagNow();
         };
         document.addEventListener('DOMContentLoaded', boostDarkUiDomReadyHandler, { once: true });
     }
@@ -539,6 +572,7 @@ function stopDarkUiTracking() {
     untagDarkUiElements();
     untagLargeUiImages();
     untagVideoContainers();
+    boostTrackingDark = false;
 }
 
 function applyBoost(boost) {
@@ -569,9 +603,12 @@ function applyBoost(boost) {
         customStyle.textContent = customCSS;
     }
 
-    // Point A lifecycle: only tag/observe while dark mode is actually active.
-    if (boost?.darkMode && boost?.enabled !== false) {
-        startDarkUiTracking();
+    // Tagging lifecycle: run whenever html has ANY filter (dark mode or color
+    // boost), so the Safari hw-decode video workaround is always in play.
+    // Dark-mode-specific tagging is gated inside the tracker via the flag.
+    const hasHtmlFilter = !!buildFilterChain(boost) && boost?.enabled !== false;
+    if (hasHtmlFilter) {
+        startDarkUiTracking(!!boost?.darkMode);
     } else {
         stopDarkUiTracking();
     }

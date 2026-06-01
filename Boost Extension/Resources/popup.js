@@ -86,11 +86,29 @@ async function saveBoost() {
     notifyContentScript();
 }
 
-/* Marks the boost as active after any user modification. */
-function markActive() {
-    if (boost.enabled !== true) {
-        boost.enabled = true;
+/* True when no modification is currently active — nothing the master toggle
+   could "turn on" remains. Slider values are ignored unless `colorEnabled`
+   is on, since the filter chain only includes them in that case. */
+function isBoostEffectivelyEmpty(b) {
+    if (b.darkMode) return false;
+    if (b.colorEnabled) return false;
+    if (Number.isInteger(b.fontIndex) && b.fontIndex !== 0) return false;
+    if (b.textCase && b.textCase !== "default") return false;
+    if (Number.isFinite(b.textSize) && b.textSize !== 100) return false;
+    if (b.zapsEnabled !== false && Array.isArray(b.zapSelectors) && b.zapSelectors.length > 0) return false;
+    if (b.customEnabled !== false && (b.customCSS || "").trim() !== "") return false;
+    return true;
+}
+
+/* Keeps the master `enabled` flag in sync with activity: any user edit that
+   leaves at least one modification on flips `enabled` to true; an edit that
+   clears the last active modification flips it off automatically. */
+function syncMasterToggle() {
+    const target = !isBoostEffectivelyEmpty(boost);
+    if (boost.enabled !== target) {
+        boost.enabled = target;
         renderEnabledToggle();
+        refreshToolbarIcon();
     }
 }
 
@@ -173,7 +191,7 @@ function renderDarkMode() {
 
 function renderColorBoostToggle() {
     document.getElementById("color-boost-toggle").checked = boost.colorEnabled === true;
-    document.getElementById("color-sliders").classList.toggle("is-disabled", boost.colorEnabled !== true);
+    document.getElementById("color-sliders").hidden = boost.colorEnabled !== true;
 }
 
 function clampInt(n, lo, hi, fallback) {
@@ -224,6 +242,21 @@ function renderHideBadge() {
     }
 }
 
+function renderCodeBadge() {
+    const badge = document.getElementById("code-badge");
+    // Count CSS rule blocks via `{`. Stripping block comments first avoids
+    // counting braces inside `/* ... */`. Inline-string `{` chars are rare
+    // enough in user-written CSS that we don't bother with a full tokenizer.
+    const css = (boost.customCSS || "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const n = (css.match(/\{/g) || []).length;
+    if (n === 0) {
+        badge.hidden = true;
+    } else {
+        badge.hidden = false;
+        badge.textContent = String(n);
+    }
+}
+
 function renderHideRules() {
     const card = document.getElementById("hide-rules");
     const title = document.getElementById("hide-rules-title");
@@ -251,6 +284,7 @@ function renderHideRules() {
         del.innerHTML = `<svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
         del.addEventListener("click", async () => {
             boost.zapSelectors = zaps.filter((_, i) => i !== idx);
+            syncMasterToggle();
             await saveBoost();
             renderHideRules();
             renderHideBadge();
@@ -271,7 +305,62 @@ function renderCustomToggle() {
 
 function renderCodeEditor() {
     const ed = document.getElementById("code-editor");
-    if (ed.value !== (boost.customCSS || "")) ed.value = boost.customCSS || "";
+    const v = boost.customCSS || "";
+    if (ed.value !== v) ed.value = v;
+    updateCodeEditorChrome(v);
+}
+
+function escapeCodeHTML(s) {
+    return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+/* Stateful CSS tokenizer. Tracks brace depth and whether we're past the
+   colon inside a declaration so we can colour property names and values
+   differently. Selectors are anything outside braces. */
+function highlightCSS(text) {
+    const RE = /(\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(@[\w-]+)|(#[\da-fA-F]+\b)|(-?\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|deg|rad|turn|fr|pt|pc|in|cm|mm|ch|ex)?)|([{};:,])|([\w-]+)/g;
+    let out = "";
+    let last = 0;
+    let depth = 0;
+    let afterColon = false;
+    let m;
+    while ((m = RE.exec(text)) !== null) {
+        if (m.index > last) out += escapeCodeHTML(text.slice(last, m.index));
+        const raw = m[0];
+        const esc = escapeCodeHTML(raw);
+        let cls;
+        if (m[1])      cls = "comment";
+        else if (m[2]) cls = "string";
+        else if (m[3]) cls = "atrule";
+        else if (m[4]) cls = "number";
+        else if (m[5]) cls = "number";
+        else if (m[6]) {
+            cls = "punct";
+            if (raw === "{")      { depth++; afterColon = false; }
+            else if (raw === "}") { depth = Math.max(0, depth - 1); afterColon = false; }
+            else if (raw === ";") { afterColon = false; }
+            else if (raw === ":" && depth > 0) { afterColon = true; }
+        }
+        else if (m[7]) {
+            cls = depth > 0 ? (afterColon ? "value" : "property") : "selector";
+        }
+        out += `<span class="tok-${cls}">${esc}</span>`;
+        last = m.index + raw.length;
+    }
+    if (last < text.length) out += escapeCodeHTML(text.slice(last));
+    return out;
+}
+
+function updateCodeEditorChrome(text) {
+    const gutter = document.getElementById("code-gutter");
+    const hi = document.getElementById("code-highlight");
+    const lineCount = Math.max(1, text.split("\n").length);
+    let gut = "";
+    for (let i = 1; i <= lineCount; i++) gut += `<div>${i}</div>`;
+    gutter.innerHTML = gut;
+    // Trailing newline trick: a final "\n " keeps the highlight box's last
+    // line tall enough to match the textarea's phantom cursor line.
+    hi.innerHTML = highlightCSS(text) + "\n ";
 }
 
 function renderAll() {
@@ -288,6 +377,7 @@ function renderAll() {
     renderZapsToggle();
     renderCustomToggle();
     renderCodeEditor();
+    renderCodeBadge();
 }
 
 /* ─── Slider persistence (debounced) ──────────────────────────── */
@@ -497,21 +587,24 @@ function wireToggles() {
     });
     document.getElementById("dark-mode-toggle").addEventListener("change", async (e) => {
         boost.darkMode = e.target.checked;
-        markActive();
+        syncMasterToggle();
         await saveBoost();
     });
     document.getElementById("color-boost-toggle").addEventListener("change", async (e) => {
         boost.colorEnabled = e.target.checked;
-        markActive();
+        syncMasterToggle();
         renderColorBoostToggle();
+        lockHomeHeight();
         await saveBoost();
     });
     document.getElementById("zaps-toggle").addEventListener("change", async (e) => {
         boost.zapsEnabled = e.target.checked;
+        syncMasterToggle();
         await saveBoost();
     });
     document.getElementById("custom-toggle").addEventListener("change", async (e) => {
         boost.customEnabled = e.target.checked;
+        syncMasterToggle();
         await saveBoost();
     });
     document.getElementById("reset-btn").addEventListener("click", resetBoost);
@@ -526,12 +619,7 @@ function wireSliders() {
             const v = clampInt(input.value, cfg.min, cfg.max, DEFAULT_BOOST[cfg.key]);
             boost[cfg.key] = v;
             if (label) label.textContent = v + cfg.suffix;
-            // First touch on any slider implicitly turns color boost on.
-            if (!boost.colorEnabled) {
-                boost.colorEnabled = true;
-                renderColorBoostToggle();
-            }
-            markActive();
+            syncMasterToggle();
             // Push to content immediately for live preview, then debounce
             // the storage write to avoid churn during the drag.
             notifyContentScript();
@@ -551,17 +639,17 @@ function wireSliders() {
 function wireSelects() {
     document.getElementById("font-select").addEventListener("change", async (e) => {
         boost.fontIndex = parseInt(e.target.value, 10);
-        markActive();
+        syncMasterToggle();
         await saveBoost();
     });
     document.getElementById("case-select").addEventListener("change", async (e) => {
         boost.textCase = e.target.value;
-        markActive();
+        syncMasterToggle();
         await saveBoost();
     });
     document.getElementById("size-select").addEventListener("change", async (e) => {
         boost.textSize = parseInt(e.target.value, 10);
-        markActive();
+        syncMasterToggle();
         await saveBoost();
     });
 }
@@ -579,12 +667,33 @@ function wireZapPick() {
 
 function wireCodeEditor() {
     const ed = document.getElementById("code-editor");
+    const gutter = document.getElementById("code-gutter");
+    const hi = document.getElementById("code-highlight");
     let timer = null;
     ed.addEventListener("input", () => {
         boost.customCSS = ed.value;
-        markActive();
+        syncMasterToggle();
+        renderCodeBadge();
+        updateCodeEditorChrome(ed.value);
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => saveBoost(), 250);
+    });
+    // Keep the highlight overlay and gutter aligned with the textarea's
+    // scroll position so the colored text sits exactly under the caret.
+    ed.addEventListener("scroll", () => {
+        hi.scrollTop = ed.scrollTop;
+        hi.scrollLeft = ed.scrollLeft;
+        gutter.scrollTop = ed.scrollTop;
+    });
+    ed.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+            e.preventDefault();
+            const start = ed.selectionStart;
+            const end = ed.selectionEnd;
+            ed.setRangeText("    ", start, end, "end");
+            // setRangeText doesn't fire `input` on its own.
+            ed.dispatchEvent(new Event("input", { bubbles: true }));
+        }
     });
 }
 
