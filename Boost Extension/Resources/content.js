@@ -154,8 +154,10 @@ const BOOST_VIDEO_CONTAINER_TAG = 'data-boost-video-container';
 
 function buildFilterChain(boost) {
     const parts = [];
-    if (boost.darkMode) {
-        // Smart invert: flips light↔dark while preserving hue.
+    if (boost.darkMode && boostPageDetectedDark !== true) {
+        // Smart invert: flips light↔dark while preserving hue. Skipped when
+        // the page itself is already dark (Phase 1 probe-and-skip): inverting
+        // a dark site would turn it light.
         parts.push("invert(1)");
         parts.push("hue-rotate(180deg)");
     }
@@ -209,7 +211,7 @@ function buildInverseFilterChain(boost) {
             parts.push(`hue-rotate(${-hue}deg)`);
         }
     }
-    if (boost.darkMode) {
+    if (boost.darkMode && boostPageDetectedDark !== true) {
         parts.push("hue-rotate(-180deg)");
         parts.push("invert(1)");
     }
@@ -220,13 +222,23 @@ function buildCSS(boost) {
     if (!boost || boost.enabled === false) return "";
     const rules = [];
 
+    // color-scheme hints to the UA so form controls, scrollbars, and
+    // `<meta name="theme-color">` honor the dark palette. Emit this even when
+    // we skip the html-level invert (Phase 1 probe-and-skip): the user still
+    // asked for dark, and the page may already be dark — we still want UA
+    // chrome to match.
+    if (boost.darkMode) {
+        rules.push(`:root { color-scheme: dark !important; }`);
+    }
+
+    // Effective dark mode: dark was requested AND we didn't detect the page is
+    // already dark. The html-level invert and all its companion rules
+    // (counter-invert overrides, UI-region exceptions) only apply when this
+    // is true.
+    const effectiveDarkMode = boost.darkMode && boostPageDetectedDark !== true;
+
     const filterChain = buildFilterChain(boost);
     if (filterChain) {
-        // color-scheme hints to the UA so form controls, scrollbars, and
-        // `<meta name="theme-color">` honor the inverted palette.
-        if (boost.darkMode) {
-            rules.push(`:root { color-scheme: dark !important; }`);
-        }
         rules.push(`html { filter: ${filterChain} !important; }`);
 
         // Counter-invert media so photos/videos/iframes keep their real
@@ -258,7 +270,7 @@ function buildCSS(boost) {
             rules.push(`[${BOOST_VIDEO_CONTAINER_TAG}="true"] > video { filter: none !important; }`);
         }
 
-        if (boost.darkMode) {
+        if (effectiveDarkMode) {
             // Point 2: images inside UI regions opt back OUT of counter-invert
             // so site logos invert along with the surrounding chrome and stay
             // legible. Higher specificity than the media rule above (descendant
@@ -506,8 +518,78 @@ let boostDarkUiDomReadyHandler = null;
 // dark mode.
 let boostTrackingDark = false;
 
+// Phase 1 probe-and-skip state. Tri-state:
+//   null  → not yet measured (body wasn't ready, color unparseable)
+//   true  → page is already dark by design, skip the html invert
+//   false → page is light, apply the invert as normal
+// Updated by boostUpdatePageDarkDetection on every retag tick.
+let boostPageDetectedDark = null;
+// Last boost passed to applyBoost. Kept so detection can re-emit CSS in place
+// (changing the style tag's textContent) without going back through applyBoost
+// — which would recurse via startDarkUiTracking → boostRetagNow.
+let boostLastAppliedBoost = null;
+
+// Read the underlying background color of <body> (falling back to <html>) and
+// classify it via the same WCAG threshold used for UI regions. CSS filters
+// don't affect getComputedStyle — it returns the pre-filter color — so this
+// reads the site's true intent even when our invert is currently applied.
+function boostDetectPageIsDark() {
+    if (!document.body) return null;
+    const bodyBg = getComputedStyle(document.body).backgroundColor;
+    let result = boostIsDarkBg(bodyBg);
+    if (result !== null) return result;
+    if (document.documentElement) {
+        const htmlBg = getComputedStyle(document.documentElement).backgroundColor;
+        result = boostIsDarkBg(htmlBg);
+        if (result !== null) return result;
+    }
+    return null;
+}
+
+// Re-measure the page background and, if the verdict flipped, rebuild the
+// boost style tag in place. No-op when dark mode isn't requested.
+function boostUpdatePageDarkDetection() {
+    if (!boostLastAppliedBoost?.darkMode) {
+        boostPageDetectedDark = null;
+        return;
+    }
+    const detected = boostDetectPageIsDark();
+    if (detected === boostPageDetectedDark) return;
+    boostPageDetectedDark = detected;
+
+    const style = document.getElementById(BOOST_STYLE_ID);
+    if (!style) return;
+    const css = buildCSS(boostLastAppliedBoost);
+    if (css) style.textContent = css;
+    else style.remove();
+}
+
+// Returns true if the user's boost asks for ANY html-level filter — dark mode
+// or non-identity color boost. Used to gate the tracker independently of
+// boostPageDetectedDark, so we keep observing even when Phase 1 has emptied
+// the filter chain (and would otherwise stop the observer, freezing the
+// detection result).
+function boostHasFilterRequest(boost) {
+    if (!boost || boost.enabled === false) return false;
+    if (boost.darkMode) return true;
+    if (boost.colorEnabled === true) {
+        const hue = Number(boost.hueRotate);
+        if (Number.isFinite(hue) && hue !== 0) return true;
+        const brightness = Number(boost.brightness);
+        if (Number.isFinite(brightness) && brightness !== 100) return true;
+        const saturation = Number(boost.saturation);
+        if (Number.isFinite(saturation) && saturation !== 100) return true;
+        const contrast = Number(boost.contrast);
+        if (Number.isFinite(contrast) && contrast !== 100) return true;
+    }
+    return false;
+}
+
 function boostRetagNow() {
     if (boostTrackingDark) {
+        // Phase 1 detection runs FIRST so the tagging passes below see the
+        // up-to-date verdict and skip work when the page is already dark.
+        boostUpdatePageDarkDetection();
         tagDarkUiElements();
         tagLargeUiImages();
     }
@@ -575,11 +657,70 @@ function stopDarkUiTracking() {
     boostTrackingDark = false;
 }
 
+// ============================================================================
+// STYLE PERSISTENCE OBSERVER
+//
+// Some sites (notably YouTube during initial Polymer hydration) rebuild
+// <head>/<html> subtrees and strip injected <style> tags. The content script
+// only runs once per full load, so without a watchdog the styles stay gone
+// until the user reloads. We track whether each style is expected to exist
+// and, when a DOM mutation drops one, re-run applyBoost to put it back.
+// Kept independent from the dark-UI observer so it stays active even when
+// no filter is requested (e.g. custom-CSS-only boosts).
+// ============================================================================
+
+let boostExpectMainStyle = false;
+let boostExpectCustomStyle = false;
+let boostStylePersistenceObserver = null;
+let boostStylePersistenceTimer = null;
+
+function boostStylesMissing() {
+    if (boostExpectMainStyle && !document.getElementById(BOOST_STYLE_ID)) return true;
+    if (boostExpectCustomStyle && !document.getElementById(BOOST_CUSTOM_STYLE_ID)) return true;
+    return false;
+}
+
+function startStylePersistenceObserver() {
+    if (boostStylePersistenceObserver) return;
+    boostStylePersistenceObserver = new MutationObserver(() => {
+        // Coalesce bursts of mutations — YouTube emits hundreds per frame
+        // during hydration. 50ms batches them into a single reapply pass.
+        if (boostStylePersistenceTimer) return;
+        boostStylePersistenceTimer = setTimeout(() => {
+            boostStylePersistenceTimer = null;
+            if (!boostLastAppliedBoost) return;
+            if (boostStylesMissing()) applyBoost(boostLastAppliedBoost);
+        }, 50);
+    });
+    boostStylePersistenceObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+    });
+}
+
+function stopStylePersistenceObserver() {
+    if (boostStylePersistenceObserver) {
+        boostStylePersistenceObserver.disconnect();
+        boostStylePersistenceObserver = null;
+    }
+    if (boostStylePersistenceTimer) {
+        clearTimeout(boostStylePersistenceTimer);
+        boostStylePersistenceTimer = null;
+    }
+}
+
 function applyBoost(boost) {
+    // Reset Phase 1 detection on dark-mode toggle transitions so the first
+    // retag after enabling dark mode starts from a clean slate. Without this,
+    // re-enabling dark mode would inherit the previous session's verdict.
+    if (!boost?.darkMode) boostPageDetectedDark = null;
+    boostLastAppliedBoost = boost;
+
     const css = buildCSS(boost);
     let style = document.getElementById(BOOST_STYLE_ID);
     if (!css) {
         style?.remove();
+        boostExpectMainStyle = false;
     } else {
         if (!style) {
             style = document.createElement("style");
@@ -587,6 +728,7 @@ function applyBoost(boost) {
             (document.head || document.documentElement).appendChild(style);
         }
         style.textContent = css;
+        boostExpectMainStyle = true;
     }
 
     // Custom CSS lives in its own style tag so it can be toggled independently.
@@ -594,6 +736,7 @@ function applyBoost(boost) {
     const customCSS = (boost && boost.enabled !== false && boost.customEnabled !== false) ? (boost.customCSS || "") : "";
     if (!customCSS) {
         customStyle?.remove();
+        boostExpectCustomStyle = false;
     } else {
         if (!customStyle) {
             customStyle = document.createElement("style");
@@ -601,16 +744,25 @@ function applyBoost(boost) {
             (document.head || document.documentElement).appendChild(customStyle);
         }
         customStyle.textContent = customCSS;
+        boostExpectCustomStyle = true;
     }
 
-    // Tagging lifecycle: run whenever html has ANY filter (dark mode or color
-    // boost), so the Safari hw-decode video workaround is always in play.
-    // Dark-mode-specific tagging is gated inside the tracker via the flag.
-    const hasHtmlFilter = !!buildFilterChain(boost) && boost?.enabled !== false;
-    if (hasHtmlFilter) {
+    // Tagging lifecycle: run whenever the user REQUESTS any filter (dark mode
+    // or color boost), so the Safari hw-decode video workaround is always in
+    // play. We gate on the request — not on whether the filter chain came out
+    // non-empty — because Phase 1 may have emptied the chain by skipping the
+    // dark invert. Stopping the observer there would freeze the detection and
+    // we'd never notice if the page later flipped from dark to light.
+    if (boostHasFilterRequest(boost)) {
         startDarkUiTracking(!!boost?.darkMode);
     } else {
         stopDarkUiTracking();
+    }
+
+    if (boostExpectMainStyle || boostExpectCustomStyle) {
+        startStylePersistenceObserver();
+    } else {
+        stopStylePersistenceObserver();
     }
 }
 

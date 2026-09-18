@@ -50,10 +50,10 @@ const VIEWS = ["home", "hide", "code"];
 // Slider config — declarative so render/wire/sanitize all read from the
 // same source of truth.
 const SLIDERS = [
-    { key: "hueRotate",  inputId: "hue-slider",        valueId: "hue-value",        min: 0,  max: 360, suffix: "°" },
-    { key: "brightness", inputId: "brightness-slider", valueId: "brightness-value", min: 50, max: 150, suffix: "%" },
-    { key: "saturation", inputId: "saturation-slider", valueId: "saturation-value", min: 0,  max: 200, suffix: "%" },
-    { key: "contrast",   inputId: "contrast-slider",   valueId: "contrast-value",   min: 50, max: 150, suffix: "%" },
+    { key: "hueRotate",  inputId: "hue-slider",        min: 0,  max: 360 },
+    { key: "brightness", inputId: "brightness-slider", min: 50, max: 150 },
+    { key: "saturation", inputId: "saturation-slider", min: 0,  max: 200 },
+    { key: "contrast",   inputId: "contrast-slider",   min: 50, max: 150 },
 ];
 
 /* ─── State ────────────────────────────────────────────────────── */
@@ -204,9 +204,45 @@ function renderSliders() {
     for (const cfg of SLIDERS) {
         const value = clampInt(boost[cfg.key], cfg.min, cfg.max, DEFAULT_BOOST[cfg.key]);
         const input = document.getElementById(cfg.inputId);
-        const label = document.getElementById(cfg.valueId);
         if (input) input.value = String(value);
-        if (label) label.textContent = value + cfg.suffix;
+    }
+    applySliderColors();
+}
+
+/* Drives the live HSL gradients and thumb fills. Each thumb shows the
+   color the slider would produce at its current value so the control
+   reads as a color swatch, not a generic UI knob. The shared --boost-h
+   on the group cascades into the saturation/brightness track gradients. */
+function applySliderColors() {
+    const hue = clampInt(boost.hueRotate, 0, 360, 0);
+    const brightness = clampInt(boost.brightness, 50, 150, 100);
+    const saturation = clampInt(boost.saturation, 0, 200, 100);
+    const contrast = clampInt(boost.contrast, 50, 150, 100);
+
+    const group = document.getElementById("color-sliders");
+    if (group) group.style.setProperty("--boost-h", String(hue));
+
+    const hueEl = document.getElementById("hue-slider");
+    if (hueEl) hueEl.style.setProperty("--boost-thumb-color", `hsl(${hue}, 100%, 50%)`);
+
+    const brightEl = document.getElementById("brightness-slider");
+    if (brightEl) {
+        // brightness 50..150 → display lightness 25..75
+        const l = Math.round(brightness / 2);
+        brightEl.style.setProperty("--boost-thumb-color", `hsl(${hue}, 55%, ${l}%)`);
+    }
+
+    const satEl = document.getElementById("saturation-slider");
+    if (satEl) {
+        const s = Math.min(saturation, 100);
+        satEl.style.setProperty("--boost-thumb-color", `hsl(${hue}, ${s}%, 55%)`);
+    }
+
+    const contrastEl = document.getElementById("contrast-slider");
+    if (contrastEl) {
+        // contrast 50..150 → display lightness 75..25 (higher contrast = darker swatch)
+        const l = 100 - contrast / 2;
+        contrastEl.style.setProperty("--boost-thumb-color", `hsl(0, 0%, ${l}%)`);
     }
 }
 
@@ -613,12 +649,11 @@ function wireToggles() {
 function wireSliders() {
     for (const cfg of SLIDERS) {
         const input = document.getElementById(cfg.inputId);
-        const label = document.getElementById(cfg.valueId);
         if (!input) continue;
         input.addEventListener("input", () => {
             const v = clampInt(input.value, cfg.min, cfg.max, DEFAULT_BOOST[cfg.key]);
             boost[cfg.key] = v;
-            if (label) label.textContent = v + cfg.suffix;
+            applySliderColors();
             syncMasterToggle();
             // Push to content immediately for live preview, then debounce
             // the storage write to avoid churn during the drag.

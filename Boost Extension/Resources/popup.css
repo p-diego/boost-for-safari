@@ -246,11 +246,14 @@ html, body {
 
 /* ── Color boost sliders ──────────────────────────────────────── */
 .slider-group {
-    padding: 6px 14px 12px;
+    padding: 6px 14px 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
     border-top: 0.5px solid var(--boost-row-divider);
+    /* Hue (0..360) shared across child tracks so saturation/brightness
+       gradients tint live with the current hue. Updated from popup.js. */
+    --boost-h: 0;
 }
 
 .slider-group[hidden] {
@@ -259,10 +262,10 @@ html, body {
 
 .slider-row {
     display: grid;
-    grid-template-columns: 72px 1fr 44px;
+    grid-template-columns: 64px 1fr;
     align-items: center;
-    gap: 10px;
-    min-height: 26px;
+    gap: 20px;
+    min-height: 22px;
 }
 
 .slider-label {
@@ -271,41 +274,67 @@ html, body {
     color: var(--boost-fg-2);
 }
 
-.slider-value {
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    color: var(--boost-fg-3);
-    text-align: right;
-}
-
 .slider {
     appearance: none;
     -webkit-appearance: none;
     width: 100%;
-    height: 4px;
+    height: 7px;
     border-radius: 999px;
     background: color-mix(in srgb, CanvasText 14%, transparent);
     outline: none;
     cursor: pointer;
     margin: 0;
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, CanvasText 12%, transparent) inset;
 }
 
 .slider::-webkit-slider-thumb {
     appearance: none;
     -webkit-appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
     border-radius: 50%;
-    background: AccentColor;
-    border: 0;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    background: var(--boost-thumb-color, #fff);
+    border: 2px solid #fff;
+    box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.28),
+        0 0 0 0.5px rgba(0, 0, 0, 0.12);
     cursor: grab;
     transition: transform 100ms ease;
 }
 
 .slider::-webkit-slider-thumb:active {
     cursor: grabbing;
-    transform: scale(1.1);
+    transform: scale(1.08);
+}
+
+.slider-hue {
+    background: linear-gradient(to right,
+        hsl(0, 100%, 50%),
+        hsl(60, 100%, 50%),
+        hsl(120, 100%, 50%),
+        hsl(180, 100%, 50%),
+        hsl(240, 100%, 50%),
+        hsl(300, 100%, 50%),
+        hsl(360, 100%, 50%));
+}
+
+.slider-brightness {
+    background: linear-gradient(to right,
+        hsl(var(--boost-h), 55%, 6%),
+        hsl(var(--boost-h), 60%, 50%),
+        hsl(var(--boost-h), 55%, 94%));
+}
+
+.slider-saturation {
+    background: linear-gradient(to right,
+        hsl(var(--boost-h), 6%, 70%),
+        hsl(var(--boost-h), 100%, 55%));
+}
+
+.slider-contrast {
+    background: linear-gradient(to right,
+        color-mix(in srgb, CanvasText 22%, Canvas),
+        color-mix(in srgb, CanvasText 90%, Canvas));
 }
 
 /* ── Native select styling ────────────────────────────────────── */
